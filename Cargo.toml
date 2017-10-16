@@ -1,0 +1,12 @@
+[package]
+authors = ["Mick Sayson <mick@sayson.com>"]
+name = "promptline"
+version = "0.1.0"
+
+[dependencies]
+ansi_term = "0.10.2"
+chrono = "0.4.0"
+error-chain = "0.11.0"
+git2 = "0.6.8"
+hostname = "0.1.3"
+user = "0.1.1"
