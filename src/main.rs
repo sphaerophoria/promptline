@@ -135,7 +135,7 @@ fn get_mercurial_info<'a>() -> Result<ANSIGenericString<'a, str>> {
 fn get_git_info<'a>() ->  Result<ANSIGenericString<'a, str>>{
     use git2::Repository;
     let get_git_name  = || -> std::result::Result<String, git2::Error> {
-        let repo = Repository::open(".")?;
+        let repo = Repository::discover(".")?;
         let head = repo.head()?;
         let name = head.shorthand().ok_or(git2::Error::from_str("Failed to get name"))?;
         let oid = head.target().ok_or(git2::Error::from_str("Failed to get target"))?;
