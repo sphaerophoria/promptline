@@ -6,6 +6,7 @@ extern crate user;
 extern crate git2;
 
 use ansi_term::Colour::*;
+use ansi_term::Style;
 use ansi_term::{ANSIGenericString, ANSIGenericStrings};
 use std::io::{self, Read, Write};
 use std::fs::File;
@@ -149,6 +150,22 @@ fn get_git_info<'a>() ->  Result<ANSIGenericString<'a, str>>{
     }
 }
 
+fn get_conda_info<'a>() -> Result<ANSIGenericString<'a, str>> {
+    let conda_env = match std::env::var("CONDA_DEFAULT_ENV") {
+        Ok(v) => v,
+        Err(_) => bail!("No conda env")
+    };
+
+    Ok(Style::default().bold().paint(format!("🐍 {}", conda_env)))
+}
+
+fn get_docker_env<'a>() -> Result<ANSIGenericString<'a, str>> {
+    match std::fs::metadata("/.dockerenv") {
+        Ok(_) => Ok(Style::default().paint("🐳")),
+        Err(_) => bail!("Not in docker container")
+    }
+}
+
 fn do_print<'a>(mut components: Vec<ANSIGenericString<'a, str>>) {
     components.insert(0,ANSIGenericString::from("┌["));
     for i in 1..components.len() - 1 {
@@ -162,12 +179,14 @@ quick_main!(run);
 fn run() -> Result<()> {
     let (oks, errors): (Vec<Result<_>>, _) = vec![
         get_time(),
+        get_docker_env(),
         get_user(),
         get_hostname(),
         get_cwd(),
         get_status(),
         get_mercurial_info(),
         get_git_info(),
+        get_conda_info(),
     ]
     .into_iter()
     .partition(|x| x.is_ok());
@@ -176,7 +195,7 @@ fn run() -> Result<()> {
 
     if Ok("1") == env::var("DEBUG_PROMPTLINE").as_ref().map(|s| s.as_str()) {
         for error in errors.into_iter().map(|e| e.unwrap_err()) {
-            let _ = write!(io::stderr(), "{}\n", error);
+            let _ = write!(io::stderr(), "{:?}\n", error);
         }
     }
     do_print(components);
