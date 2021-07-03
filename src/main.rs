@@ -181,6 +181,8 @@ fn do_print(mut components: Vec<ColoredString>) {
 }
 
 fn main() -> Result<()> {
+    colored::control::set_override(true);
+
     let (oks, errors): (Vec<Result<_>>, _) = vec![
         get_time(),
         get_docker_env(),
