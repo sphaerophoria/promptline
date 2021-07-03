@@ -1,66 +1,56 @@
-#[macro_use] extern crate error_chain;
-extern crate ansi_term;
-extern crate chrono;
-extern crate hostname;
-extern crate user;
-extern crate git2;
+use anyhow::{anyhow, bail, Context, Result};
+use colored::{Colorize, ColoredString};
+use std::{env, fs::File, io::{self, Read, Write}, path::PathBuf};
 
-use ansi_term::Colour::*;
-use ansi_term::Style;
-use ansi_term::{ANSIGenericString, ANSIGenericStrings};
-use std::io::{self, Read, Write};
-use std::fs::File;
-use std::env;
-
-mod errors {
-    error_chain! { }
-}
-
-use errors::*;
-
-fn get_time<'a>() -> Result<ANSIGenericString<'a, str>> {
+fn get_time() -> Result<ColoredString> {
     let time = chrono::Local::now().time();
-    Ok(Cyan.bold().paint(format!("{}", time.format("%H:%M"))))
+    Ok(format!("{}", time.format("%H:%M")).cyan().bold())
 }
 
-fn get_user<'a>() -> Result<ANSIGenericString<'a, str>> {
-    let user = user::get_user_name()
-        .chain_err(|| "Failed to retrieve username")?;
+fn get_user() -> Result<ColoredString> {
+    let user = nix::unistd::User::from_uid(nix::unistd::getuid())
+        .into_iter()
+        .flatten()
+        .next()
+        .ok_or(anyhow!("Failed to get user"))?;
 
-    let color_user = match user.as_str() {
-        "root" => Red.bold().paint(user),
-        _ => Purple.bold().paint(user),
+    let color_user = match user.name.as_str() {
+        "root" => user.name.red().bold(),
+        _ => user.name.purple().bold(),
     };
 
     Ok(color_user)
 }
 
-fn get_hostname<'a>() -> Result<ANSIGenericString<'a, str>> {
-    let hostname = hostname::get_hostname()
-        .ok_or("Failed to get hostname")?;
+fn get_hostname() -> Result<ColoredString> {
+    let mut buf = [0u8; 64];
+    let res = nix::unistd::gethostname(&mut buf)
+        .context("Failed to retrieve hostname")?
+        .to_str()
+        .context("Hostname not a valid utf8 string")?
+        .green()
+        .bold();
 
-    let color_hostname = Green.bold().paint(hostname);
-
-    Ok(color_hostname)
+    Ok(res)
 }
 
-fn get_status<'a>() -> Result<ANSIGenericString<'a, str>> {
-    let status = env::args().nth(1).ok_or("No exit status")?;
+fn get_status() -> Result<ColoredString> {
+    let status = env::args().nth(1).ok_or(anyhow!("No exit status"))?;
 
     let color_status  = match status.as_str() {
-        "0" => Green.bold().paint(status),
-        _ => Red.bold().paint(status),
+        "0" => status.green().bold(),
+        _ => status.red().bold()
     };
 
     Ok(color_status)
 }
 
-fn get_cwd<'a>() -> Result<ANSIGenericString<'a, str>> {
+fn get_cwd() -> Result<ColoredString> {
 
     let cwd = env::var("PWD");
 
     if cwd.is_err() {
-        return Ok(Red.bold().paint("!!!"));
+        return Ok("!!!".red().bold());
     }
 
     let mut cwd = cwd.unwrap();
@@ -71,11 +61,11 @@ fn get_cwd<'a>() -> Result<ANSIGenericString<'a, str>> {
         }
     }
 
-    Ok(Blue.bold().paint(cwd))
+    Ok(cwd.blue().bold())
 }
 
-fn get_mercurial_info<'a>() -> Result<ANSIGenericString<'a, str>> {
-    let mut hg_root = env::current_dir().chain_err(|| "No cwd")?;
+fn get_mercurial_info() -> Result<ColoredString> {
+    let mut hg_root = env::current_dir().with_context(|| "No cwd")?;
 
     loop {
         if hg_root.join(".hg").exists() {
@@ -110,7 +100,7 @@ fn get_mercurial_info<'a>() -> Result<ANSIGenericString<'a, str>> {
         .flat_map(|f| f.bytes())
         .take(6)
         .filter_map(|x| x.ok())
-        .map(|x| format!("{:x}", x))
+        .map(|x| format!("{:02x}", x))
         .collect::<String>();
 
     hg_components.push(s);
@@ -126,63 +116,78 @@ fn get_mercurial_info<'a>() -> Result<ANSIGenericString<'a, str>> {
     }
 
     if output.is_empty() {
-        return Ok(ANSIGenericString::from(output));
+        return Ok(output.as_str().into());
     }
 
-    let output = Green.bold().paint(output);
+    let output = output.green().bold();
     Ok(output)
 }
 
-fn get_git_info<'a>() ->  Result<ANSIGenericString<'a, str>>{
+fn get_git_info() ->  Result<ColoredString>{
     use git2::Repository;
     let get_git_name  = || -> std::result::Result<String, git2::Error> {
         let repo = Repository::discover(".")?;
         let head = repo.head()?;
         let name = head.shorthand().ok_or(git2::Error::from_str("Failed to get name"))?;
         let oid = head.target().ok_or(git2::Error::from_str("Failed to get target"))?;
-        let oid_str = oid.as_bytes().iter().take(6).map(|x| format!("{:x}", x)).collect::<String>();
+        let oid_str = oid.as_bytes().iter().take(6).map(|x| format!("{:02x}", x)).collect::<String>();
         Ok(format!("{} {}", name, oid_str))
     };
 
     match get_git_name() {
-      Ok(s) => Ok(Green.bold().paint(s)),
+      Ok(s) => Ok(s.green().bold()),
       Err(_) => bail!("Not in git folder"),
     }
 }
 
-fn get_conda_info<'a>() -> Result<ANSIGenericString<'a, str>> {
+fn get_conda_info() -> Result<ColoredString> {
     let conda_env = match std::env::var("CONDA_DEFAULT_ENV") {
         Ok(v) => v,
         Err(_) => bail!("No conda env")
     };
 
-    Ok(Style::default().bold().paint(format!("🐍 {}", conda_env)))
+    Ok(format!("🐍 {}", conda_env).bold())
 }
 
-fn get_docker_env<'a>() -> Result<ANSIGenericString<'a, str>> {
+fn get_docker_env() -> Result<ColoredString> {
     match std::fs::metadata("/.dockerenv") {
-        Ok(_) => Ok(Style::default().paint("🐳")),
+        Ok(_) => Ok("🐳".into()),
         Err(_) => bail!("Not in docker container")
     }
 }
 
-fn do_print<'a>(mut components: Vec<ANSIGenericString<'a, str>>) {
-    components.insert(0,ANSIGenericString::from("┌["));
-    for i in 1..components.len() - 1 {
-        components.insert(2*i, ANSIGenericString::from("]-["));
-    }
-    components.push(ANSIGenericString::from("]\n└> "));
-    print!("{}", ANSIGenericStrings(&components));
+fn get_shell() -> Result<ColoredString> {
+    let shell: PathBuf = std::env::var("SHELL")
+        .context("SHELL not set")?
+        .into();
+
+    let name = shell.file_name()
+        .ok_or(anyhow!("Failed to get shell name"))?
+        .to_str()
+        .ok_or(anyhow!("Failed to convert shell name to string"))?;
+
+    Ok(name.bold())
 }
 
-quick_main!(run);
-fn run() -> Result<()> {
+fn do_print(mut components: Vec<ColoredString>) {
+    components.insert(0,"┌[".into());
+    for i in 1..components.len() - 1 {
+        components.insert(2*i, "]-[".into());
+    }
+    components.push("]\n└> ".into());
+    for component in components {
+        print!("{}", component);
+    }
+}
+
+fn main() -> Result<()> {
     let (oks, errors): (Vec<Result<_>>, _) = vec![
         get_time(),
         get_docker_env(),
         get_user(),
         get_hostname(),
         get_cwd(),
+        get_shell(),
         get_status(),
         get_mercurial_info(),
         get_git_info(),
