@@ -169,6 +169,17 @@ fn get_shell() -> Result<ColoredString> {
     Ok(name.bold())
 }
 
+fn show_nix_shell() -> Result<ColoredString> {
+
+    std::env::var("IN_NIX_SHELL")
+        .context("Not in nix shell")?;
+
+    let shell_name = std::env::var("name")
+        .unwrap_or("nix-shell".to_string());
+
+    Ok(format!("nix: {}", shell_name).bold())
+}
+
 fn do_print(mut components: Vec<ColoredString>) {
     components.insert(0,"┌[".into());
     for i in 1..components.len() - 1 {
@@ -194,6 +205,7 @@ fn main() -> Result<()> {
         get_mercurial_info(),
         get_git_info(),
         get_conda_info(),
+        show_nix_shell(),
     ]
     .into_iter()
     .partition(|x| x.is_ok());
