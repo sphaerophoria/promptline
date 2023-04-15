@@ -5,8 +5,6 @@ edition = "2018"
 version = "0.1.0"
 
 [dependencies]
-anyhow = "1.0.41"
 colored = "2.0.0"
 chrono = "0.4.0"
 nix = "0.21.0"
-git2 = "0.6.8"
