@@ -1,17 +1,91 @@
-use colored::{ColoredString, Colorize};
-
 use std::{
     env,
     error::Error,
-    fmt,
+    fmt::{self, Write as FmtWrite},
     fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
-fn get_time() -> ColoredString {
+#[allow(unused)]
+enum Color {
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+}
+
+impl Color {
+    fn to_ansi(&self) -> i32 {
+        match self {
+            Color::Red => 31,
+            Color::Green => 32,
+            Color::Yellow => 33,
+            Color::Blue => 34,
+            Color::Magenta => 35,
+            Color::Cyan => 36,
+            Color::White => 37,
+        }
+    }
+}
+
+enum DecoratedString {
+    Bold(Box<DecoratedString>),
+    Colored(Box<DecoratedString>, Color),
+    Default(String),
+}
+
+impl DecoratedString {
+    fn append_to_ansi(val: &DecoratedString, s: &mut String) -> Result<(), fmt::Error> {
+        // https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
+        match val {
+            DecoratedString::Bold(inner) => {
+                write!(s, "\x1b[1m")?;
+                Self::append_to_ansi(inner, s)?;
+                write!(s, "\x1b[22m")?;
+            }
+            DecoratedString::Colored(inner, color) => {
+                write!(s, "\x1b[{}m", color.to_ansi())?;
+                Self::append_to_ansi(inner, s)?;
+                write!(s, "\x1b[39m")?;
+            }
+            DecoratedString::Default(val) => {
+                write!(s, "{val}")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn to_ansi(&self) -> String {
+        let mut ret = String::new();
+        Self::append_to_ansi(self, &mut ret).unwrap();
+        ret
+    }
+
+    fn bold(self) -> DecoratedString {
+        DecoratedString::Bold(Box::new(self))
+    }
+
+    fn colored(self, color: Color) -> DecoratedString {
+        DecoratedString::Colored(Box::new(self), color)
+    }
+
+    fn new(s: String) -> DecoratedString {
+        DecoratedString::Default(s)
+    }
+}
+
+fn get_time() -> String {
     let time = chrono::Local::now().time();
-    format!("{}", time.format("%H:%M")).cyan().bold()
+    let formatted = format!("{}", time.format("%H:%M"));
+    DecoratedString::new(formatted)
+        .bold()
+        .colored(Color::Cyan)
+        .to_ansi()
 }
 
 #[derive(Debug)]
@@ -38,17 +112,19 @@ impl Error for UserError {
     }
 }
 
-fn get_user() -> Result<ColoredString, UserError> {
+fn get_user() -> Result<String, UserError> {
     let user = nix::unistd::User::from_uid(nix::unistd::getuid())
         .map_err(UserError::GetUser)?
         .ok_or(UserError::NoUser)?;
 
     let color_user = match user.name.as_str() {
-        "root" => user.name.red().bold(),
-        _ => user.name.purple().bold(),
+        "root" => DecoratedString::new(user.name).colored(Color::Red).bold(),
+        _ => DecoratedString::new(user.name)
+            .colored(Color::Magenta)
+            .bold(),
     };
 
-    Ok(color_user)
+    Ok(color_user.to_ansi())
 }
 
 #[derive(Debug)]
@@ -77,14 +153,17 @@ impl Error for HostnameError {
     }
 }
 
-fn get_hostname() -> Result<ColoredString, HostnameError> {
+fn get_hostname() -> Result<String, HostnameError> {
     let mut buf = [0u8; 64];
     let res = nix::unistd::gethostname(&mut buf)
         .map_err(HostnameError::GetHostname)?
         .to_str()
-        .map_err(HostnameError::GetHostnameString)?
-        .green()
-        .bold();
+        .map_err(HostnameError::GetHostnameString)?;
+
+    let res = DecoratedString::new(res.to_string())
+        .colored(Color::Green)
+        .bold()
+        .to_ansi();
 
     Ok(res)
 }
@@ -100,22 +179,31 @@ impl fmt::Display for NoExitStatus {
 
 impl Error for NoExitStatus {}
 
-fn get_status() -> Result<ColoredString, NoExitStatus> {
+fn get_status() -> Result<String, NoExitStatus> {
     let status = env::args().nth(1).ok_or(NoExitStatus)?;
 
     let color_status = match status.as_str() {
-        "0" => status.green().bold(),
-        _ => status.red().bold(),
+        "0" => DecoratedString::new(status)
+            .colored(Color::Green)
+            .bold()
+            .to_ansi(),
+        _ => DecoratedString::new(status)
+            .colored(Color::Red)
+            .bold()
+            .to_ansi(),
     };
 
     Ok(color_status)
 }
 
-fn get_cwd() -> ColoredString {
+fn get_cwd() -> String {
     let cwd = env::var("PWD");
 
     if cwd.is_err() {
-        return "!!!".red().bold();
+        return DecoratedString::new("!!!".to_string())
+            .colored(Color::Red)
+            .bold()
+            .to_ansi();
     }
 
     let mut cwd = cwd.unwrap();
@@ -126,7 +214,10 @@ fn get_cwd() -> ColoredString {
         }
     }
 
-    cwd.blue().bold()
+    DecoratedString::new(cwd)
+        .colored(Color::Blue)
+        .bold()
+        .to_ansi()
 }
 
 #[derive(Debug)]
@@ -153,7 +244,7 @@ impl Error for HgError {
     }
 }
 
-fn get_mercurial_info() -> Result<ColoredString, HgError> {
+fn get_mercurial_info() -> Result<String, HgError> {
     let mut hg_root = env::current_dir().map_err(HgError::NoCwd)?;
 
     loop {
@@ -210,7 +301,10 @@ fn get_mercurial_info() -> Result<ColoredString, HgError> {
         return Ok(output.as_str().into());
     }
 
-    let output = output.green().bold();
+    let output = DecoratedString::new(output)
+        .colored(Color::Green)
+        .bold()
+        .to_ansi();
     Ok(output)
 }
 
@@ -256,7 +350,7 @@ impl Error for GitError {
     }
 }
 
-fn get_git_info() -> Result<ColoredString, GitError> {
+fn get_git_info() -> Result<String, GitError> {
     let cwd = env::current_dir().map_err(GitError::NoCwd)?;
     let canonical_cwd = fs::canonicalize(cwd).map_err(GitError::CanonicalCwd)?;
 
@@ -292,7 +386,8 @@ fn get_git_info() -> Result<ColoredString, GitError> {
         Some(refs_path) => {
             let refs_path = Path::new(refs_path.trim());
 
-            let commit_hash = fs::read_to_string(git_dir.join(refs_path)).map_err(GitError::ReadRef)?;
+            let commit_hash =
+                fs::read_to_string(git_dir.join(refs_path)).map_err(GitError::ReadRef)?;
 
             let short_hash = &commit_hash[..14];
             let ref_name = refs_path
@@ -302,12 +397,13 @@ fn get_git_info() -> Result<ColoredString, GitError> {
 
             format!("{ref_name} {short_hash}")
         }
-        None => {
-            head_content[..14].to_string()
-        }
+        None => head_content[..14].to_string(),
     };
 
-    Ok(output.green().bold())
+    Ok(DecoratedString::new(output)
+        .colored(Color::Green)
+        .bold()
+        .to_ansi())
 }
 
 #[derive(Debug)]
@@ -321,9 +417,11 @@ impl fmt::Display for NoCondaEnv {
 
 impl Error for NoCondaEnv {}
 
-fn get_conda_info() -> Result<ColoredString, NoCondaEnv> {
+fn get_conda_info() -> Result<String, NoCondaEnv> {
     let conda_env = std::env::var("CONDA_DEFAULT_ENV").map_err(|_| NoCondaEnv)?;
-    Ok(format!("🐍 {conda_env}").bold())
+    Ok(DecoratedString::new(format!("🐍 {conda_env}"))
+        .bold()
+        .to_ansi())
 }
 
 #[derive(Debug)]
@@ -337,7 +435,7 @@ impl fmt::Display for NotDockerContainer {
 
 impl Error for NotDockerContainer {}
 
-fn get_docker_env() -> Result<ColoredString, NotDockerContainer> {
+fn get_docker_env() -> Result<String, NotDockerContainer> {
     match std::fs::metadata("/.dockerenv") {
         Ok(_) => Ok("🐳".into()),
         Err(_) => Err(NotDockerContainer),
@@ -361,7 +459,7 @@ impl fmt::Display for ShellError {
 
 impl Error for ShellError {}
 
-fn get_shell() -> Result<ColoredString, ShellError> {
+fn get_shell() -> Result<String, ShellError> {
     let shell: PathBuf = std::env::var("SHELL")
         .map_err(|_| ShellError::EnvNotSet)?
         .into();
@@ -371,7 +469,7 @@ fn get_shell() -> Result<ColoredString, ShellError> {
         .ok_or(ShellError::NoShellName)?
         .to_string_lossy();
 
-    Ok(name.bold())
+    Ok(DecoratedString::new(name.to_string()).bold().to_ansi())
 }
 
 #[derive(Debug)]
@@ -385,15 +483,17 @@ impl fmt::Display for NotInNixShell {
 
 impl Error for NotInNixShell {}
 
-fn show_nix_shell() -> Result<ColoredString, NotInNixShell> {
+fn show_nix_shell() -> Result<String, NotInNixShell> {
     std::env::var("IN_NIX_SHELL").map_err(|_| NotInNixShell)?;
 
     let shell_name = std::env::var("name").unwrap_or("nix-shell".to_string());
 
-    Ok(format!("nix: {shell_name}").bold())
+    Ok(DecoratedString::new(format!("nix: {shell_name}"))
+        .bold()
+        .to_ansi())
 }
 
-fn do_print(mut components: Vec<ColoredString>) {
+fn do_print(mut components: Vec<String>) {
     components.insert(0, "┌[".into());
     for i in 1..components.len() - 1 {
         components.insert(2 * i, "]-[".into());
@@ -471,9 +571,7 @@ impl fmt::Display for MainError {
 }
 
 fn main() {
-    colored::control::set_override(true);
-
-    let (oks, errors): (Vec<_>, Vec<_>) = vec![
+    let (oks, errors): (Vec<Result<_, MainError>>, Vec<_>) = vec![
         Ok(get_time()),
         get_docker_env().map_err(MainError::Docker),
         get_user().map_err(MainError::User),
